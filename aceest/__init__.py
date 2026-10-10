@@ -1,4 +1,4 @@
 """ACEest Fitness & Gym application package."""
-from aceest import clients, programs, tracking
+from aceest import clients, membership, programs, tracking
 
-BLUEPRINTS = [programs.bp, clients.bp, tracking.bp]
+BLUEPRINTS = [programs.bp, clients.bp, tracking.bp, membership.bp]
