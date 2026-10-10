@@ -13,7 +13,6 @@ pipeline {
 
     environment {
         IMAGE = 'aceest-fitness'
-        CONTAINER = 'aceest-staging'
         DEPLOY_PORT = '8000'
     }
 
@@ -66,14 +65,9 @@ pipeline {
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy (rolling update)') {
             steps {
-                // the named volume keeps the SQLite data across redeploys
-                sh '''
-                    docker rm -f ${CONTAINER} || true
-                    docker run -d --name ${CONTAINER} --restart unless-stopped \
-                        -p ${DEPLOY_PORT}:5000 -v aceest-data:/app/data ${IMAGE}:${BUILD_NUMBER}
-                '''
+                sh 'bash deploy/rolling.sh ${IMAGE}:${BUILD_NUMBER}'
             }
         }
 
@@ -84,7 +78,7 @@ pipeline {
                         if curl -fsS http://localhost:${DEPLOY_PORT}/health; then exit 0; fi
                         sleep 2
                     done
-                    docker logs ${CONTAINER}
+                    docker logs aceest-lb
                     exit 1
                 '''
             }
@@ -102,19 +96,10 @@ pipeline {
             sh 'docker image prune -f'
         }
         success {
-            echo "Build ${BUILD_NUMBER} deployed to http://localhost:${DEPLOY_PORT}"
+            echo "Build ${BUILD_NUMBER} rolled out to http://localhost:${DEPLOY_PORT}"
         }
         failure {
-            // a failed lint/test leaves staging untouched; a failed deploy is rolled back
-            sh '''
-                if docker image inspect ${IMAGE}:stable > /dev/null 2>&1 \
-                        && ! curl -fsS http://localhost:${DEPLOY_PORT}/health > /dev/null 2>&1; then
-                    echo "Staging is unhealthy - rolling back to ${IMAGE}:stable"
-                    docker rm -f ${CONTAINER} || true
-                    docker run -d --name ${CONTAINER} --restart unless-stopped \
-                        -p ${DEPLOY_PORT}:5000 -v aceest-data:/app/data ${IMAGE}:stable
-                fi
-            '''
+            echo "Build ${BUILD_NUMBER} failed - replicas that were not replaced keep serving the previous version"
         }
     }
 }
