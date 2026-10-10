@@ -65,9 +65,9 @@ pipeline {
             }
         }
 
-        stage('Deploy (rolling update)') {
+        stage('Deploy (blue-green)') {
             steps {
-                sh 'bash deploy/rolling.sh ${IMAGE}:${BUILD_NUMBER}'
+                sh 'bash deploy/blue-green.sh deploy ${IMAGE}:${BUILD_NUMBER}'
             }
         }
 
@@ -96,10 +96,10 @@ pipeline {
             sh 'docker image prune -f'
         }
         success {
-            echo "Build ${BUILD_NUMBER} rolled out to http://localhost:${DEPLOY_PORT}"
+            echo "Build ${BUILD_NUMBER} deployed (blue-green) to http://localhost:${DEPLOY_PORT}"
         }
         failure {
-            echo "Build ${BUILD_NUMBER} failed - replicas that were not replaced keep serving the previous version"
+            echo "Build ${BUILD_NUMBER} failed - live traffic was not switched to the new version"
         }
     }
 }
