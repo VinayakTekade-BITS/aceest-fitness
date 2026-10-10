@@ -13,6 +13,8 @@ pipeline {
 
     environment {
         IMAGE = 'aceest-fitness'
+        CONTAINER = 'aceest-staging'
+        DEPLOY_PORT = '8000'
     }
 
     stages {
@@ -63,14 +65,56 @@ pipeline {
                 sh 'docker run --rm ${IMAGE}:test-${BUILD_NUMBER}'
             }
         }
+
+        stage('Deploy') {
+            steps {
+                // the named volume keeps the SQLite data across redeploys
+                sh '''
+                    docker rm -f ${CONTAINER} || true
+                    docker run -d --name ${CONTAINER} --restart unless-stopped \
+                        -p ${DEPLOY_PORT}:5000 -v aceest-data:/app/data ${IMAGE}:${BUILD_NUMBER}
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                sh '''
+                    for i in $(seq 1 15); do
+                        if curl -fsS http://localhost:${DEPLOY_PORT}/health; then exit 0; fi
+                        sleep 2
+                    done
+                    docker logs ${CONTAINER}
+                    exit 1
+                '''
+            }
+        }
+
+        stage('Mark Stable') {
+            steps {
+                sh 'docker tag ${IMAGE}:${BUILD_NUMBER} ${IMAGE}:stable'
+            }
+        }
     }
 
     post {
+        always {
+            sh 'docker image prune -f'
+        }
         success {
-            echo "Build ${BUILD_NUMBER} passed: ${IMAGE}:${BUILD_NUMBER} is ready"
+            echo "Build ${BUILD_NUMBER} deployed to http://localhost:${DEPLOY_PORT}"
         }
         failure {
-            echo "Build ${BUILD_NUMBER} failed - check the stage logs above"
+            // a failed lint/test leaves staging untouched; a failed deploy is rolled back
+            sh '''
+                if docker image inspect ${IMAGE}:stable > /dev/null 2>&1 \
+                        && ! curl -fsS http://localhost:${DEPLOY_PORT}/health > /dev/null 2>&1; then
+                    echo "Staging is unhealthy - rolling back to ${IMAGE}:stable"
+                    docker rm -f ${CONTAINER} || true
+                    docker run -d --name ${CONTAINER} --restart unless-stopped \
+                        -p ${DEPLOY_PORT}:5000 -v aceest-data:/app/data ${IMAGE}:stable
+                fi
+            '''
         }
     }
 }
