@@ -9,6 +9,7 @@ Docker, and validated by GitHub Actions and Jenkins on every change.
 ## Project structure
 
 ```
+docs/                   # Screenshots for the whole assignment
 app.py                  # Flask app factory, health endpoint, JSON error handling
 aceest/
   programs.py           # Fat Loss / Muscle Gain / Beginner programs
