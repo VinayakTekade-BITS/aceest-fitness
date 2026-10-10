@@ -153,3 +153,7 @@ The deployment strategy evolved in three steps (see the `cd/*` pull requests):
 - `main` is always releasable; work happens on `feature/*`, `infra/*`, `ci/*`, `cd/*` and `docs/*` branches.
 - Every change is merged through a pull request after CI passes.
 - Commit messages follow Conventional Commits (`feat:`, `test:`, `ci:`, `cd:`, `build:`, `docs:`).
+
+## Assignment report
+
+See [docs/REPORT.md](docs/REPORT.md).
