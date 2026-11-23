@@ -21,6 +21,8 @@ jobs:
         run: python -m compileall -q app.py ACEest_Fitness.py aceest tests
       - name: Lint with flake8
         run: flake8 .
+      - name: Check deployment scripts (bash syntax)
+        run: for f in deploy/k8s/*.sh scripts/*.sh; do bash -n "$f"; done
 
   docker-build:
     name: Docker Image Assembly
