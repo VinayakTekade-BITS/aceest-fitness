@@ -9,13 +9,14 @@ pipeline {
     options {
         buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
         disableConcurrentBuilds()
+        timeout(time: 60, unit: 'MINUTES')
     }
 
     environment {
         DOCKERHUB_REPO = 'vinayaktekadebits/aceest-fitness'
-        DEPLOY_PORT = '8000'
         SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_TOKEN = credentials('sonarqube-token')
+        KUBECONFIG = credentials('kubeconfig')     // file credential: path to a kubeconfig for Minikube
     }
 
     stages {
@@ -134,30 +135,53 @@ pipeline {
             }
         }
 
-        stage('Deploy (blue-green)') {
+        // Progressive delivery: each strategy is its own environment with its own URL.
+        // The cheapest checks with the smallest blast radius run first (shadow: no user sees
+        // the new version; canary: ~25 % of one endpoint). A failed stage rolls its own strategy
+        // back and stops the build, so the stages after it never receive the bad version.
+        // A stage is skipped until its script exists (each strategy was added in its own PR).
+        stage('Deploy: Shadow') {
+            when { expression { fileExists('deploy/k8s/shadow.sh') } }
             steps {
-                sh 'bash deploy/blue-green.sh deploy "$IMAGE"'
+                sh 'bash deploy/k8s/shadow.sh deploy "$IMAGE"'
             }
         }
 
-        stage('Smoke Test') {
+        stage('Deploy: Canary') {
+            when { expression { fileExists('deploy/k8s/canary.sh') } }
             steps {
-                sh '''
-                    for i in $(seq 1 15); do
-                        if curl -fsS http://localhost:${DEPLOY_PORT}/health; then exit 0; fi
-                        sleep 2
-                    done
-                    docker logs aceest-lb
-                    exit 1
-                '''
+                sh 'bash deploy/k8s/canary.sh deploy "$IMAGE"'
+            }
+        }
+
+        stage('Deploy: Rolling Update') {
+            when { expression { fileExists('deploy/k8s/rolling.sh') } }
+            steps {
+                sh 'bash deploy/k8s/rolling.sh deploy "$IMAGE"'
+            }
+        }
+
+        stage('Deploy: Blue-Green') {
+            when { expression { fileExists('deploy/k8s/blue-green.sh') } }
+            steps {
+                sh 'bash deploy/k8s/blue-green.sh deploy "$IMAGE"'
+            }
+        }
+
+        stage('Deploy: A/B Testing') {
+            when { expression { fileExists('deploy/k8s/ab-testing.sh') } }
+            steps {
+                sh 'bash deploy/k8s/ab-testing.sh deploy "$IMAGE"'
             }
         }
 
         stage('Mark Stable') {
             steps {
                 sh '''
+                    bash deploy/k8s/release.sh mark-stable "$IMAGE"
                     docker tag "$IMAGE" "$DOCKERHUB_REPO:stable"
                     docker push "$DOCKERHUB_REPO:stable"
+                    bash deploy/k8s/status.sh
                 '''
             }
         }
@@ -169,10 +193,10 @@ pipeline {
             sh 'docker image prune -f'
         }
         success {
-            echo "Build ${env.BUILD_NUMBER}: ${env.IMAGE} pushed to Docker Hub and deployed (blue-green) to http://localhost:${env.DEPLOY_PORT}"
+            echo "Build ${env.BUILD_NUMBER}: ${env.IMAGE} passed every stage and is the new stable release"
         }
         failure {
-            echo "Build ${env.BUILD_NUMBER} failed - live traffic was not switched to the new version"
+            echo "Build ${env.BUILD_NUMBER} failed. The failed deploy stage rolled its strategy back; later stages were not run."
         }
     }
 }
