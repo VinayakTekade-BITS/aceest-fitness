@@ -19,11 +19,23 @@ CMD ["pytest", "-v", "-p", "no:cacheprovider"]
 
 # ---- runtime: production image (default target) ----
 FROM base AS runtime
-COPY app.py .
+COPY app.py ACEest_Fitness.py ./
 COPY aceest ./aceest
 RUN mkdir /app/data && chown appuser:appuser /app/data
-ENV ACEEST_DB=/app/data/aceest_fitness.db
-USER appuser
+# Version information, passed in by Jenkins. Declared late so that a new version
+# does not invalidate the cached layers above.
+ARG APP_VERSION=dev
+ARG GIT_COMMIT=unknown
+LABEL org.opencontainers.image.title="aceest-fitness" \
+      org.opencontainers.image.description="ACEest Fitness & Gym Flask API" \
+      org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}"
+ENV ACEEST_DB=/app/data/aceest_fitness.db \
+    APP_VERSION=${APP_VERSION} \
+    GIT_COMMIT=${GIT_COMMIT} \
+    GUNICORN_CMD_ARGS="--access-logfile=- --worker-tmp-dir=/dev/shm"
+# numeric UID, so that Kubernetes can verify runAsNonRoot
+USER 10001
 EXPOSE 5000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health')" || exit 1
