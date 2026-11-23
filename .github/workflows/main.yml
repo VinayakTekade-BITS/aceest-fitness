@@ -22,6 +22,8 @@ jobs:
       - name: Lint with flake8
         run: flake8 .
       - name: Check deployment scripts (bash syntax)
+        run: shopt -s nullglob; for f in deploy/k8s/*.sh scripts/*.sh; do bash -n "$f"; done
+      - name: Check deployment scripts (bash syntax)
         run: for f in deploy/k8s/*.sh scripts/*.sh; do bash -n "$f"; done
 
   docker-build:
