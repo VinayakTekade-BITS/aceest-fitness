@@ -10,3 +10,4 @@ reports/
 .env
 .scannerwork/
 .sonar/
+dist/
