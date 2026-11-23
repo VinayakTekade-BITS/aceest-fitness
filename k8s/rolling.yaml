@@ -1,0 +1,78 @@
+# Rolling update: 3 replicas, replaced one pod at a time.
+# maxSurge 1 + maxUnavailable 0: a new pod must pass its readiness probe before an old one
+# is stopped, so capacity never drops below 3 ready pods.
+# Template: deploy/k8s/rolling.sh fills in __IMAGE__ and __CHANGE_CAUSE__ and applies it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aceest-rolling
+  namespace: aceest
+  labels: {app: aceest, strategy: rolling}
+  annotations:
+    kubernetes.io/change-cause: "__CHANGE_CAUSE__"
+spec:
+  replicas: 3
+  revisionHistoryLimit: 10
+  minReadySeconds: 5
+  progressDeadlineSeconds: 90
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels: {app: aceest, strategy: rolling}
+  template:
+    metadata:
+      labels: {app: aceest, strategy: rolling}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 5000}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]   # let the Service stop routing here before shutdown
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: aceest-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aceest-rolling
+  namespace: aceest
+  labels: {app: aceest, strategy: rolling}
+spec:
+  type: NodePort
+  selector: {app: aceest, strategy: rolling}
+  ports:
+    - {name: http, port: 80, targetPort: http, nodePort: 30081}

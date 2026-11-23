@@ -1,0 +1,24 @@
+# Namespace and shared storage for every deployment strategy.
+# Applied by each script in deploy/k8s/ before it deploys anything.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aceest
+  labels:
+    app.kubernetes.io/part-of: aceest-fitness
+---
+# SQLite database shared by the live tracks of all strategies. ReadWriteOnce is enough on a
+# single-node Minikube: every pod runs on the same node. (The shadow track has its own
+# throw-away database, see shadow.yaml.)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aceest-data
+  namespace: aceest
+  labels:
+    app: aceest
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
