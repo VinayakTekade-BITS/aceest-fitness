@@ -4,6 +4,8 @@ from contextlib import contextmanager
 
 from flask import current_app
 
+# Only additive changes (new tables or nullable columns), so that two versions can share
+# the database while a rolling, canary or blue-green deployment is in progress.
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS clients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,6 +30,14 @@ CREATE TABLE IF NOT EXISTS workouts (
     workout_type TEXT NOT NULL,
     duration_min INTEGER NOT NULL,
     notes TEXT
+);
+CREATE TABLE IF NOT EXISTS metrics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    date TEXT NOT NULL,
+    weight_kg REAL NOT NULL,
+    waist_cm REAL,
+    bodyfat_pct REAL
 );
 """
 
