@@ -1,0 +1,242 @@
+# A/B testing: variant A (control, the previous stable release) and variant B (the new
+# release) run side by side. An nginx router decides per user which variant answers:
+#   1. the X-Variant request header (a or b), so testers can pick a variant
+#   2. otherwise the ab_variant cookie, so a user keeps the variant they got first
+#   3. otherwise 50/50 at random; the router then sets the cookie
+# Template: deploy/k8s/ab-testing.sh fills in __A_IMAGE__ and __B_IMAGE__ and applies it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aceest-ab-a
+  namespace: aceest
+  labels: {app: aceest, strategy: ab-testing, variant: a}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 90
+  selector:
+    matchLabels: {app: aceest, strategy: ab-testing, variant: a}
+  template:
+    metadata:
+      labels: {app: aceest, strategy: ab-testing, variant: a}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: __A_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 5000}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: aceest-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aceest-ab-b
+  namespace: aceest
+  labels: {app: aceest, strategy: ab-testing, variant: b}
+spec:
+  replicas: 1
+  revisionHistoryLimit: 5
+  progressDeadlineSeconds: 90
+  selector:
+    matchLabels: {app: aceest, strategy: ab-testing, variant: b}
+  template:
+    metadata:
+      labels: {app: aceest, strategy: ab-testing, variant: b}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: app
+          image: __B_IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - {name: http, containerPort: 5000}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: data, mountPath: /app/data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: aceest-data}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aceest-ab-a
+  namespace: aceest
+  labels: {app: aceest, strategy: ab-testing}
+spec:
+  selector: {app: aceest, strategy: ab-testing, variant: a}
+  ports:
+    - {name: http, port: 5000, targetPort: http}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aceest-ab-b
+  namespace: aceest
+  labels: {app: aceest, strategy: ab-testing}
+spec:
+  selector: {app: aceest, strategy: ab-testing, variant: b}
+  ports:
+    - {name: http, port: 5000, targetPort: http}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aceest-ab-router
+  namespace: aceest
+  labels: {app: aceest-router, strategy: ab-testing}
+data:
+  default.conf: |
+    upstream variant_a { server aceest-ab-a:5000; }
+    upstream variant_b { server aceest-ab-b:5000; }
+
+    # new users: 50/50 at random ($request_id is a random value per request)
+    split_clients "${request_id}" $ab_random {
+        50%  a;
+        *    b;
+    }
+
+    # "<X-Variant header>:<ab_variant cookie>" -> variant; the header wins over the cookie
+    map "$http_x_variant:$cookie_ab_variant" $ab_variant {
+        default   $ab_random;
+        "~*^a:"   a;
+        "~*^b:"   b;
+        "~*^:a$"  a;
+        "~*^:b$"  b;
+    }
+
+    server {
+        listen 8080;
+
+        location / {
+            proxy_pass http://variant_$ab_variant;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            add_header X-Variant $ab_variant always;
+            add_header Set-Cookie "ab_variant=$ab_variant; Path=/; Max-Age=604800; SameSite=Lax" always;
+        }
+
+        location = /router-health {
+            access_log off;
+            return 200 "ok\n";
+        }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aceest-ab-router
+  namespace: aceest
+  labels: {app: aceest-router, strategy: ab-testing}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: aceest-router, strategy: ab-testing}
+  template:
+    metadata:
+      labels: {app: aceest-router, strategy: ab-testing}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: nginx
+          image: nginxinc/nginx-unprivileged:stable-alpine
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /router-health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /router-health, port: http}
+            periodSeconds: 10
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 200m, memory: 128Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/nginx/conf.d, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: aceest-ab-router}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aceest-ab-router
+  namespace: aceest
+  labels: {app: aceest-router, strategy: ab-testing}
+spec:
+  type: NodePort
+  selector: {app: aceest-router, strategy: ab-testing}
+  ports:
+    - {name: http, port: 80, targetPort: http, nodePort: 30084}
