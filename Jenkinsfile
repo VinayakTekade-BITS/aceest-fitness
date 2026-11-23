@@ -7,13 +7,15 @@ pipeline {
     }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        buildDiscarder(logRotator(numToKeepStr: '20'))
         disableConcurrentBuilds()
     }
 
     environment {
         IMAGE = 'aceest-fitness'
         DEPLOY_PORT = '8000'
+        SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_TOKEN = credentials('sonarqube-token')
     }
 
     stages {
@@ -43,12 +45,35 @@ pipeline {
 
         stage('Unit Tests') {
             steps {
-                sh '. .venv/bin/activate && pytest -v --junitxml=reports/junit.xml --cov=aceest --cov=app --cov-report=term'
+                sh '''
+                    . .venv/bin/activate
+                    pytest -v --junitxml=reports/junit.xml \
+                        --cov=aceest --cov=app --cov=ACEest_Fitness \
+                        --cov-report=term --cov-report=xml:reports/coverage.xml
+                '''
             }
             post {
                 always {
                     junit allowEmptyResults: true, testResults: 'reports/junit.xml'
                 }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                // Runs the scanner in a container. The workspace is mounted at the same path, so
+                // the file paths in coverage.xml match. qualitygate.wait makes the scanner wait
+                // for SonarQube's verdict and fail this stage if the quality gate fails.
+                sh '''
+                    docker run --rm --network host --user "$(id -u):$(id -g)" \
+                        -e SONAR_HOST_URL -e SONAR_TOKEN -e SONAR_USER_HOME="$WORKSPACE/.sonar" \
+                        -v "$WORKSPACE:$WORKSPACE" -w "$WORKSPACE" \
+                        sonarsource/sonar-scanner-cli:latest \
+                        -Dsonar.projectVersion="$(cat VERSION)" \
+                        -Dsonar.working.directory="$WORKSPACE/.scannerwork" \
+                        -Dsonar.qualitygate.wait=true \
+                        -Dsonar.qualitygate.timeout=300
+                '''
             }
         }
 
