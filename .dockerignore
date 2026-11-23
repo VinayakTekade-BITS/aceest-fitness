@@ -8,7 +8,15 @@ __pycache__
 .coverage
 htmlcov
 reports
+dist
 *.db
+.sonar
+.scannerwork
 Jenkinsfile
 README.md
+sonar-project.properties
 legacy
+docs
+deploy
+k8s
+scripts

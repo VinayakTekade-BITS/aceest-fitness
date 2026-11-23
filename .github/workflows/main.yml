@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: Compile (syntax check)
-        run: python -m compileall -q app.py aceest tests
+        run: python -m compileall -q app.py ACEest_Fitness.py aceest tests
       - name: Lint with flake8
         run: flake8 .
 
