@@ -8,3 +8,5 @@ htmlcov/
 reports/
 *.db
 .env
+.scannerwork/
+.sonar/
