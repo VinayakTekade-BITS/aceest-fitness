@@ -12,7 +12,7 @@ pipeline {
     }
 
     environment {
-        DOCKERHUB_REPO = '/aceest-fitness'
+        DOCKERHUB_REPO = 'vinayaktekadebits/aceest-fitness'
         DEPLOY_PORT = '8000'
         SONAR_HOST_URL = 'http://localhost:9000'
         SONAR_TOKEN = credentials('sonarqube-token')
